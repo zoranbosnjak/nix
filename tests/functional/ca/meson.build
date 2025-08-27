@@ -5,13 +5,14 @@ configure_file(
 )
 
 suites += {
-  'name': 'ca',
-  'deps': [],
-  'tests': [
+  'name' : 'ca',
+  'deps' : [],
+  'tests' : [
+    'build-cache.sh',
     'build-with-garbage-path.sh',
     'build.sh',
-    'build-cache.sh',
     'concurrent-builds.sh',
+    'derivation-advanced-attributes.sh',
     'derivation-json.sh',
     'duplicate-realisation-in-closure.sh',
     'eval-store.sh',
@@ -29,5 +30,5 @@ suites += {
     'substitute.sh',
     'why-depends.sh',
   ],
-  'workdir': meson.current_build_dir(),
+  'workdir' : meson.current_source_dir(),
 }

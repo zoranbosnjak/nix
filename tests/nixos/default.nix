@@ -1,115 +1,158 @@
-{ lib, nixpkgs, nixpkgsFor, self }:
+{
+  lib,
+  pkgs,
+  nixComponents,
+  nixpkgs,
+  nixpkgs-23-11,
+}:
 
 let
 
   nixos-lib = import (nixpkgs + "/nixos/lib") { };
 
-  noTests = pkg: pkg.overrideAttrs (
-            finalAttrs: prevAttrs: {
-              doCheck = false;
-              doInstallCheck = false;
-            });
+  noTests =
+    pkg:
+    pkg.overrideAttrs (
+      finalAttrs: prevAttrs: {
+        doCheck = false;
+        doInstallCheck = false;
+      }
+    );
 
   # https://nixos.org/manual/nixos/unstable/index.html#sec-calling-nixos-tests
-  runNixOSTestFor = system: test:
+  runNixOSTest =
+    test:
     (nixos-lib.runTest {
       imports = [
         test
       ];
 
-      hostPkgs = nixpkgsFor.${system}.native;
+      hostPkgs = pkgs;
       defaults = {
-        nixpkgs.pkgs = nixpkgsFor.${system}.native;
+        nixpkgs.pkgs = pkgs;
         nix.checkAllErrors = false;
-        nix.package = noTests nixpkgsFor.${system}.native.nix;
+        # TODO: decide which packaging stage to use. `nix-cli` is efficient, but not the same as the user-facing `everything.nix` package (`default`). Perhaps a good compromise is `everything.nix` + `noTests` defined above?
+        nix.package = nixComponents.nix-cli;
+
+        # Evaluate VMs faster
+        documentation.enable = false;
+        # this links against nix and might break with our git version.
+        system.tools.nixos-option.enable = false;
       };
+      _module.args.nixComponents = nixComponents;
       _module.args.nixpkgs = nixpkgs;
-      _module.args.system = system;
+      _module.args.system = pkgs.system;
     })
     // {
       # allow running tests against older nix versions via `nix eval --apply`
       # Example:
       #   nix build "$(nix eval --raw --impure .#hydraJobs.tests.fetch-git --apply 't: (t.forNix "2.19.2").drvPath')^*"
-      forNix = nixVersion: runNixOSTestFor system {
-        imports = [test];
-        defaults.nixpkgs.overlays = [(curr: prev: {
-          # NOTE: noTests pkg might not have been built yet for some older versions of the package
-          #       and in versions before 2.25, the untested build wasn't shared with the tested build yet
-          #       Add noTests here when those versions become irrelevant.
-          nix = (builtins.getFlake "nix/${nixVersion}").packages.${system}.nix;
-        })];
-      };
+      forNix =
+        nixVersion:
+        runNixOSTest {
+          imports = [ test ];
+          defaults.nixpkgs.overlays = [
+            (curr: prev: {
+              nix =
+                let
+                  packages = (builtins.getFlake "nix/${nixVersion}").packages.${pkgs.system};
+                in
+                packages.nix-cli or packages.nix;
+            })
+          ];
+        };
     };
 
   # Checks that a NixOS configuration does not contain any references to our
   # locally defined Nix version.
-  checkOverrideNixVersion = { pkgs, lib, ... }: {
-    # pkgs.nix: The new Nix in this repo
-    # We disallow it, to make sure we don't accidentally use it.
-    system.forbiddenDependenciesRegexes = [
-      (lib.strings.escapeRegex "nix-${pkgs.nix.version}")
-    ];
-  };
+  checkOverrideNixVersion =
+    { pkgs, lib, ... }:
+    {
+      # pkgs.nix: The new Nix in this repo
+      # We disallow it, to make sure we don't accidentally use it.
+      system.forbiddenDependenciesRegexes = [
+        (lib.strings.escapeRegex "nix-${pkgs.nix.version}")
+      ];
+    };
 
-  otherNixes.nix_2_3.setNixPackage = { lib, pkgs, ... }: {
-    imports = [ checkOverrideNixVersion ];
-    nix.package = lib.mkForce pkgs.nixVersions.nix_2_3;
-  };
+  otherNixes.nix_2_3.setNixPackage =
+    { lib, pkgs, ... }:
+    {
+      imports = [ checkOverrideNixVersion ];
+      nix.package = lib.mkForce (
+        pkgs.nixVersions.nix_2_3.overrideAttrs (o: {
+          meta = o.meta // {
+            # This version shouldn't be used by end-users, but we run tests against
+            # it to ensure we don't break protocol compatibility.
+            knownVulnerabilities = [ ];
+          };
+        })
+      );
+    };
 
-  otherNixes.nix_2_13.setNixPackage = { lib, pkgs, ... }: {
-    imports = [ checkOverrideNixVersion ];
-    nix.package = lib.mkForce (
-      self.inputs.nixpkgs-23-11.legacyPackages.${pkgs.stdenv.hostPlatform.system}.nixVersions.nix_2_13.overrideAttrs (o: {
-        meta = o.meta // { knownVulnerabilities = []; };
-      })
-    );
-  };
-
-  otherNixes.nix_2_18.setNixPackage = { lib, pkgs, ... }: {
-    imports = [ checkOverrideNixVersion ];
-    nix.package = lib.mkForce pkgs.nixVersions.nix_2_18;
-  };
+  otherNixes.nix_2_13.setNixPackage =
+    { lib, pkgs, ... }:
+    {
+      imports = [ checkOverrideNixVersion ];
+      nix.package = lib.mkForce (
+        nixpkgs-23-11.legacyPackages.${pkgs.stdenv.hostPlatform.system}.nixVersions.nix_2_13.overrideAttrs
+          (o: {
+            meta = o.meta // {
+              # This version shouldn't be used by end-users, but we run tests against
+              # it to ensure we don't break protocol compatibility.
+              knownVulnerabilities = [ ];
+            };
+          })
+      );
+    };
 
 in
 
 {
-  authorization = runNixOSTestFor "x86_64-linux" ./authorization.nix;
+  authorization = runNixOSTest ./authorization.nix;
 
-  remoteBuilds = runNixOSTestFor "x86_64-linux" ./remote-builds.nix;
+  remoteBuilds = runNixOSTest ./remote-builds.nix;
 
-  remoteBuildsSshNg = runNixOSTestFor "x86_64-linux" ./remote-builds-ssh-ng.nix;
+  remoteBuildsSshNg = runNixOSTest ./remote-builds-ssh-ng.nix;
 
 }
 // lib.concatMapAttrs (
-  nixVersion: { setNixPackage, ... }:
+  nixVersion:
+  { setNixPackage, ... }:
   {
-    "remoteBuilds_remote_${nixVersion}" = runNixOSTestFor "x86_64-linux" {
+    "remoteBuilds_remote_${nixVersion}" = runNixOSTest {
       name = "remoteBuilds_remote_${nixVersion}";
       imports = [ ./remote-builds.nix ];
-      builders.config = { lib, pkgs, ... }: {
-        imports = [ setNixPackage ];
-      };
+      builders.config =
+        { lib, pkgs, ... }:
+        {
+          imports = [ setNixPackage ];
+        };
     };
 
-    "remoteBuilds_local_${nixVersion}" = runNixOSTestFor "x86_64-linux" {
+    "remoteBuilds_local_${nixVersion}" = runNixOSTest {
       name = "remoteBuilds_local_${nixVersion}";
       imports = [ ./remote-builds.nix ];
-      nodes.client = { lib, pkgs, ... }: {
-        imports = [ setNixPackage ];
-      };
+      nodes.client =
+        { lib, pkgs, ... }:
+        {
+          imports = [ setNixPackage ];
+        };
     };
 
-    "remoteBuildsSshNg_remote_${nixVersion}" = runNixOSTestFor "x86_64-linux" {
+    "remoteBuildsSshNg_remote_${nixVersion}" = runNixOSTest {
       name = "remoteBuildsSshNg_remote_${nixVersion}";
       imports = [ ./remote-builds-ssh-ng.nix ];
-      builders.config = { lib, pkgs, ... }: {
-        imports = [ setNixPackage ];
-      };
+      builders.config =
+        { lib, pkgs, ... }:
+        {
+          imports = [ setNixPackage ];
+        };
     };
 
     # FIXME: these tests don't work yet
 
-    # "remoteBuildsSshNg_local_${nixVersion}" = runNixOSTestFor "x86_64-linux" {
+    # "remoteBuildsSshNg_local_${nixVersion}" = runNixOSTest {
     #   name = "remoteBuildsSshNg_local_${nixVersion}";
     #   imports = [ ./remote-builds-ssh-ng.nix ];
     #   nodes.client = { lib, pkgs, ... }: {
@@ -120,45 +163,49 @@ in
 ) otherNixes
 // {
 
-  nix-copy-closure = runNixOSTestFor "x86_64-linux" ./nix-copy-closure.nix;
+  nix-copy-closure = runNixOSTest ./nix-copy-closure.nix;
 
-  nix-copy = runNixOSTestFor "x86_64-linux" ./nix-copy.nix;
+  nix-copy = runNixOSTest ./nix-copy.nix;
 
-  nssPreload = runNixOSTestFor "x86_64-linux" ./nss-preload.nix;
+  nix-docker = runNixOSTest ./nix-docker.nix;
 
-  githubFlakes = runNixOSTestFor "x86_64-linux" ./github-flakes.nix;
+  nssPreload = runNixOSTest ./nss-preload.nix;
 
-  gitSubmodules = runNixOSTestFor "x86_64-linux" ./git-submodules.nix;
+  githubFlakes = runNixOSTest ./github-flakes.nix;
 
-  sourcehutFlakes = runNixOSTestFor "x86_64-linux" ./sourcehut-flakes.nix;
+  gitSubmodules = runNixOSTest ./git-submodules.nix;
 
-  tarballFlakes = runNixOSTestFor "x86_64-linux" ./tarball-flakes.nix;
+  sourcehutFlakes = runNixOSTest ./sourcehut-flakes.nix;
 
-  containers = runNixOSTestFor "x86_64-linux" ./containers/containers.nix;
+  tarballFlakes = runNixOSTest ./tarball-flakes.nix;
 
-  setuid = lib.genAttrs
-    ["x86_64-linux"]
-    (system: runNixOSTestFor system ./setuid.nix);
+  containers = runNixOSTest ./containers/containers.nix;
 
-  fetch-git = runNixOSTestFor "x86_64-linux" ./fetch-git;
+  setuid = runNixOSTest ./setuid.nix;
 
-  ca-fd-leak = runNixOSTestFor "x86_64-linux" ./ca-fd-leak;
+  fetch-git = runNixOSTest ./fetch-git;
 
-  gzip-content-encoding = runNixOSTestFor "x86_64-linux" ./gzip-content-encoding.nix;
+  ca-fd-leak = runNixOSTest ./ca-fd-leak;
 
-  functional_user = runNixOSTestFor "x86_64-linux" ./functional/as-user.nix;
+  gzip-content-encoding = runNixOSTest ./gzip-content-encoding.nix;
 
-  functional_trusted = runNixOSTestFor "x86_64-linux" ./functional/as-trusted-user.nix;
+  functional_user = runNixOSTest ./functional/as-user.nix;
 
-  functional_root = runNixOSTestFor "x86_64-linux" ./functional/as-root.nix;
+  functional_trusted = runNixOSTest ./functional/as-trusted-user.nix;
 
-  user-sandboxing = runNixOSTestFor "x86_64-linux" ./user-sandboxing;
+  functional_root = runNixOSTest ./functional/as-root.nix;
 
-  s3-binary-cache-store = runNixOSTestFor "x86_64-linux" ./s3-binary-cache-store.nix;
+  functional_symlinked-home = runNixOSTest ./functional/symlinked-home.nix;
 
-  fsync = runNixOSTestFor "x86_64-linux" ./fsync.nix;
+  user-sandboxing = runNixOSTest ./user-sandboxing;
 
-  cgroups = runNixOSTestFor "x86_64-linux" ./cgroups;
+  s3-binary-cache-store = runNixOSTest ./s3-binary-cache-store.nix;
 
-  fetchurl = runNixOSTestFor "x86_64-linux" ./fetchurl.nix;
+  fsync = runNixOSTest ./fsync.nix;
+
+  cgroups = runNixOSTest ./cgroups;
+
+  fetchurl = runNixOSTest ./fetchurl.nix;
+
+  chrootStore = runNixOSTest ./chroot-store.nix;
 }

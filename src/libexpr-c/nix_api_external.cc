@@ -1,8 +1,8 @@
-#include "attr-set.hh"
-#include "config.hh"
-#include "eval.hh"
-#include "globals.hh"
-#include "value.hh"
+#include "nix/expr/attr-set.hh"
+#include "nix/util/configuration.hh"
+#include "nix/expr/eval.hh"
+#include "nix/store/globals.hh"
+#include "nix/expr/value.hh"
 
 #include "nix_api_expr.h"
 #include "nix_api_expr_internal.h"
@@ -10,7 +10,7 @@
 #include "nix_api_util.h"
 #include "nix_api_util_internal.h"
 #include "nix_api_value.h"
-#include "value/context.hh"
+#include "nix/expr/value/context.hh"
 
 #include <nlohmann/json.hpp>
 
@@ -48,11 +48,13 @@ class NixCExternalValue : public nix::ExternalValueBase
 public:
     NixCExternalValue(NixCExternalValueDesc & desc, void * v)
         : desc(desc)
-        , v(v){};
+        , v(v) {};
+
     void * get_ptr()
     {
         return v;
     }
+
     /**
      * Print out the value
      */
@@ -155,11 +157,17 @@ public:
         }
         nix_string_context ctx{context};
         desc.printValueAsXML(
-            v, (EvalState *) &state, strict, location, &doc, &ctx, &drvsSeen,
+            v,
+            (EvalState *) &state,
+            strict,
+            location,
+            &doc,
+            &ctx,
+            &drvsSeen,
             *reinterpret_cast<const uint32_t *>(&pos));
     }
 
-    virtual ~NixCExternalValue() override{};
+    virtual ~NixCExternalValue() override {};
 };
 
 ExternalValue * nix_create_external_value(nix_c_context * context, NixCExternalValueDesc * desc, void * v)
@@ -168,7 +176,7 @@ ExternalValue * nix_create_external_value(nix_c_context * context, NixCExternalV
         context->last_err_code = NIX_OK;
     try {
         auto ret = new
-#if HAVE_BOEHMGC
+#if NIX_USE_BOEHMGC
             (GC)
 #endif
                 NixCExternalValue(*desc, v);

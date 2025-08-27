@@ -33,7 +33,8 @@ readonly NIX_BUILD_GROUP_NAME="nixbld"
 readonly NIX_ROOT="/nix"
 readonly NIX_EXTRA_CONF=${NIX_EXTRA_CONF:-}
 
-readonly PROFILE_TARGETS=("/etc/bashrc" "/etc/profile.d/nix.sh" "/etc/zshrc" "/etc/bash.bashrc" "/etc/zsh/zshrc")
+# PROFILE_TARGETS will be set later after OS-specific scripts are loaded
+PROFILE_TARGETS=()
 readonly PROFILE_BACKUP_SUFFIX=".backup-before-nix"
 readonly PROFILE_NIX_FILE="$NIX_ROOT/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"
 
@@ -55,6 +56,9 @@ readonly NIX_INSTALLED_CACERT="@cacert@"
 #readonly NIX_INSTALLED_NIX="/nix/store/j8dbv5w6jl34caywh2ygdy88knx1mdf7-nix-2.3.6"
 #readonly NIX_INSTALLED_CACERT="/nix/store/7dxhzymvy330i28ii676fl1pqwcahv2f-nss-cacert-3.49.2"
 readonly EXTRACTED_NIX_PATH="$(dirname "$0")"
+
+# allow to override identity change command
+readonly NIX_BECOME=${NIX_BECOME:-sudo}
 
 readonly ROOT_HOME=~root
 
@@ -96,6 +100,14 @@ is_os_darwin() {
     fi
 }
 
+is_os_freebsd() {
+    if [ "$(uname -s)" = "FreeBSD" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 contact_us() {
     echo "You can open an issue at"
     echo "https://github.com/NixOS/nix/issues/new?labels=installer&template=installer.md"
@@ -123,7 +135,7 @@ uninstall_directions() {
             cat <<EOF
 $step. Restore $profile_target$PROFILE_BACKUP_SUFFIX back to $profile_target
 
-  sudo mv $profile_target$PROFILE_BACKUP_SUFFIX $profile_target
+  $NIX_BECOME mv $profile_target$PROFILE_BACKUP_SUFFIX $profile_target
 
 (after this one, you may need to re-open any terminals that were
 opened while it existed.)
@@ -136,7 +148,7 @@ EOF
     cat <<EOF
 $step. Delete the files Nix added to your system:
 
-  sudo rm -rf "/etc/nix" "$NIX_ROOT" "$ROOT_HOME/.nix-profile" "$ROOT_HOME/.nix-defexpr" "$ROOT_HOME/.nix-channels" "$ROOT_HOME/.local/state/nix" "$ROOT_HOME/.cache/nix" "$HOME/.nix-profile" "$HOME/.nix-defexpr" "$HOME/.nix-channels" "$HOME/.local/state/nix" "$HOME/.cache/nix"
+  $NIX_BECOME rm -rf "/etc/nix" "$NIX_ROOT" "$ROOT_HOME/.nix-profile" "$ROOT_HOME/.nix-defexpr" "$ROOT_HOME/.nix-channels" "$ROOT_HOME/.local/state/nix" "$ROOT_HOME/.cache/nix" "$HOME/.nix-profile" "$HOME/.nix-defexpr" "$HOME/.nix-channels" "$HOME/.local/state/nix" "$HOME/.cache/nix"
 
 and that is it.
 
@@ -343,7 +355,7 @@ __sudo() {
 
     echo "I am executing:"
     echo ""
-    printf "    $ sudo %s\\n" "$cmd"
+    printf "    $ $NIX_BECOME %s\\n" "$cmd"
     echo ""
     echo "$expl"
     echo ""
@@ -361,7 +373,9 @@ _sudo() {
     if is_root; then
         env "$@"
     else
-        sudo "$@"
+        # env sets environment variables for sudo alternatives
+        # that don't support "VAR=value command" syntax
+        $NIX_BECOME env "$@"
     fi
 }
 
@@ -493,6 +507,10 @@ You have aborted the installation.
 EOF
         fi
     fi
+
+    if is_os_freebsd; then
+        ok "Detected FreeBSD, will set up rc.d service for nix-daemon"
+    fi
 }
 
 setup_report() {
@@ -557,7 +575,7 @@ create_build_user_for_core() {
         if [ "$actual_uid" != "$uid" ]; then
             failure <<EOF
 It seems the build user $username already exists, but with the UID
-with the UID '$actual_uid'. This script can't really handle that right
+'$actual_uid'. This script can't really handle that right
 now, so I'm going to give up.
 
 If you already created the users and you know they start from
@@ -690,7 +708,7 @@ place_channel_configuration() {
     if [ -z "${NIX_INSTALLER_NO_CHANNEL_ADD:-}" ]; then
         echo "https://nixos.org/channels/nixpkgs-unstable nixpkgs" > "$SCRATCH/.nix-channels"
         _sudo "to set up the default system channel (part 1)" \
-            install -m 0664 "$SCRATCH/.nix-channels" "$ROOT_HOME/.nix-channels"
+            install -m 0644 "$SCRATCH/.nix-channels" "$ROOT_HOME/.nix-channels"
     fi
 }
 
@@ -829,8 +847,13 @@ install_from_extracted_nix() {
     (
         cd "$EXTRACTED_NIX_PATH"
 
-        _sudo "to copy the basic Nix files to the new store at $NIX_ROOT/store" \
-              cp -RPp ./store/* "$NIX_ROOT/store/"
+        if is_os_darwin || is_os_freebsd; then
+            _sudo "to copy the basic Nix files to the new store at $NIX_ROOT/store" \
+                  cp -RPp ./store/* "$NIX_ROOT/store/"
+        else
+            _sudo "to copy the basic Nix files to the new store at $NIX_ROOT/store" \
+                  cp -RP --preserve=ownership,timestamps ./store/* "$NIX_ROOT/store/"
+        fi
 
         _sudo "to make the new store non-writable at $NIX_ROOT/store" \
               chmod -R ugo-w "$NIX_ROOT/store/"
@@ -964,7 +987,7 @@ $NIX_EXTRA_CONF
 build-users-group = $NIX_BUILD_GROUP_NAME
 EOF
     _sudo "to place the default nix daemon configuration (part 2)" \
-          install -m 0664 "$SCRATCH/nix.conf" /etc/nix/nix.conf
+          install -m 0644 "$SCRATCH/nix.conf" /etc/nix/nix.conf
 }
 
 
@@ -979,10 +1002,21 @@ main() {
         # shellcheck source=./install-systemd-multi-user.sh
         . "$EXTRACTED_NIX_PATH/install-systemd-multi-user.sh" # most of this works on non-systemd distros also
         check_required_system_specific_settings "install-systemd-multi-user.sh"
+    elif is_os_freebsd; then
+        # shellcheck source=./install-freebsd-multi-user.sh
+        . "$EXTRACTED_NIX_PATH/install-freebsd-multi-user.sh"
+        check_required_system_specific_settings "install-freebsd-multi-user.sh"
     else
         failure "Sorry, I don't know what to do on $(uname)"
     fi
 
+
+    # Set profile targets after OS-specific scripts are loaded
+    if command -v poly_configure_default_profile_targets > /dev/null 2>&1; then
+        PROFILE_TARGETS=($(poly_configure_default_profile_targets))
+    else
+        PROFILE_TARGETS=("/etc/bashrc" "/etc/profile.d/nix.sh" "/etc/zshrc" "/etc/bash.bashrc" "/etc/zsh/zshrc")
+    fi
 
     welcome_to_nix
 

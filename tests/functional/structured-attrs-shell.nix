@@ -12,9 +12,16 @@ mkDerivation {
   name = "structured2";
   __structuredAttrs = true;
   inherit stdenv;
-  outputs = [ "out" "dev" ];
-  my.list = [ "a" "b" "c" ];
-  exportReferencesGraph.refs = [ dep ];
+  outputs = [
+    "out"
+    "dev"
+  ];
+  my.list = [
+    "a"
+    "b"
+    "c"
+  ];
+  exportReferencesGraph.refs = dep;
   buildCommand = ''
     touch ''${outputs[out]}; touch ''${outputs[dev]}
   '';

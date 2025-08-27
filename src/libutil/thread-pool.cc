@@ -1,6 +1,6 @@
-#include "thread-pool.hh"
-#include "signals.hh"
-#include "util.hh"
+#include "nix/util/thread-pool.hh"
+#include "nix/util/signals.hh"
+#include "nix/util/util.hh"
 
 namespace nix {
 
@@ -9,7 +9,8 @@ ThreadPool::ThreadPool(size_t _maxThreads)
 {
     if (!maxThreads) {
         maxThreads = std::thread::hardware_concurrency();
-        if (!maxThreads) maxThreads = 1;
+        if (!maxThreads)
+            maxThreads = 1;
     }
 
     debug("starting pool of %d threads", maxThreads - 1);
@@ -29,7 +30,8 @@ void ThreadPool::shutdown()
         std::swap(workers, state->workers);
     }
 
-    if (workers.empty()) return;
+    if (workers.empty())
+        return;
 
     debug("reaping %d worker threads", workers.size());
 
@@ -110,10 +112,15 @@ void ThreadPool::doWork(bool mainThread)
                            propagate it. */
                         try {
                             std::rethrow_exception(exc);
+                        } catch (const Interrupted &) {
+                            // The interrupted state may be picked up by multiple
+                            // workers, which is expected, so we should ignore
+                            // it silently and let the first one bubble up,
+                            // rethrown via the original state->exception.
+                        } catch (const ThreadPoolShutDown &) {
+                            // Similarly expected.
                         } catch (std::exception & e) {
-                            if (!dynamic_cast<ThreadPoolShutDown*>(&e))
-                                ignoreExceptionExceptInterrupt();
-                        } catch (...) {
+                            ignoreExceptionExceptInterrupt();
                         }
                     }
                 }
@@ -122,9 +129,11 @@ void ThreadPool::doWork(bool mainThread)
             /* Wait until a work item is available or we're asked to
                quit. */
             while (true) {
-                if (quit) return;
+                if (quit)
+                    return;
 
-                if (!state->pending.empty()) break;
+                if (!state->pending.empty())
+                    break;
 
                 /* If there are no active or pending items, and the
                    main thread is running process(), then no new items
@@ -153,6 +162,4 @@ void ThreadPool::doWork(bool mainThread)
     }
 }
 
-}
-
-
+} // namespace nix

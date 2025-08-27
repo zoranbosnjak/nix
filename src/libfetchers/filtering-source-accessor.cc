@@ -1,4 +1,4 @@
-#include "filtering-source-accessor.hh"
+#include "nix/fetchers/filtering-source-accessor.hh"
 
 namespace nix {
 
@@ -50,26 +50,29 @@ std::string FilteringSourceAccessor::showPath(const CanonPath & path)
 void FilteringSourceAccessor::checkAccess(const CanonPath & path)
 {
     if (!isAllowed(path))
-        throw makeNotAllowedError
-            ? makeNotAllowedError(path)
-            : RestrictedPathError("access to path '%s' is forbidden", showPath(path));
+        throw makeNotAllowedError ? makeNotAllowedError(path)
+                                  : RestrictedPathError("access to path '%s' is forbidden", showPath(path));
 }
 
 struct AllowListSourceAccessorImpl : AllowListSourceAccessor
 {
     std::set<CanonPath> allowedPrefixes;
+    std::unordered_set<CanonPath> allowedPaths;
 
     AllowListSourceAccessorImpl(
         ref<SourceAccessor> next,
         std::set<CanonPath> && allowedPrefixes,
+        std::unordered_set<CanonPath> && allowedPaths,
         MakeNotAllowedError && makeNotAllowedError)
         : AllowListSourceAccessor(SourcePath(next), std::move(makeNotAllowedError))
         , allowedPrefixes(std::move(allowedPrefixes))
-    { }
+        , allowedPaths(std::move(allowedPaths))
+    {
+    }
 
     bool isAllowed(const CanonPath & path) override
     {
-        return path.isAllowed(allowedPrefixes);
+        return allowedPaths.contains(path) || path.isAllowed(allowedPrefixes);
     }
 
     void allowPrefix(CanonPath prefix) override
@@ -81,18 +84,21 @@ struct AllowListSourceAccessorImpl : AllowListSourceAccessor
 ref<AllowListSourceAccessor> AllowListSourceAccessor::create(
     ref<SourceAccessor> next,
     std::set<CanonPath> && allowedPrefixes,
+    std::unordered_set<CanonPath> && allowedPaths,
     MakeNotAllowedError && makeNotAllowedError)
 {
-    return make_ref<AllowListSourceAccessorImpl>(next, std::move(allowedPrefixes), std::move(makeNotAllowedError));
+    return make_ref<AllowListSourceAccessorImpl>(
+        next, std::move(allowedPrefixes), std::move(allowedPaths), std::move(makeNotAllowedError));
 }
 
 bool CachingFilteringSourceAccessor::isAllowed(const CanonPath & path)
 {
     auto i = cache.find(path);
-    if (i != cache.end()) return i->second;
+    if (i != cache.end())
+        return i->second;
     auto res = isAllowedUncached(path);
     cache.emplace(path, res);
     return res;
 }
 
-}
+} // namespace nix

@@ -10,7 +10,7 @@ tarroot=$TEST_ROOT/tarball
 rm -rf "$tarroot"
 mkdir -p "$tarroot"
 cp dependencies.nix "$tarroot/default.nix"
-cp config.nix dependencies.builder*.sh "$tarroot/"
+cp "${config_nix}" dependencies.builder*.sh "$tarroot/"
 touch -d '@1000000000' "$tarroot" "$tarroot"/*
 
 hash=$(nix hash path "$tarroot")
@@ -45,7 +45,7 @@ test_tarball() {
     nix-instantiate --eval -E 'with <fnord/xyzzy>; 1 + 2' -I fnord=file:///no-such-tarball"$ext"
     (! nix-instantiate --eval -E '<fnord/xyzzy> 1' -I fnord=file:///no-such-tarball"$ext")
 
-    nix-instantiate --eval -E '<fnord/config.nix>' -I fnord=file:///no-such-tarball"$ext" -I fnord=.
+    nix-instantiate --eval -E '<fnord/config.nix>' -I fnord=file:///no-such-tarball"$ext" -I fnord="${_NIX_TEST_BUILD_DIR}"
 
     # Ensure that the `name` attribute isn’t accepted as that would mess
     # with the content-addressing
@@ -73,13 +73,14 @@ test_tarball .gz gzip
 # All entries in tree.tar.gz refer to the same file, and all have the same inode when unpacked by GNU tar.
 # We don't preserve the hard links, because that's an optimization we think is not worth the complexity,
 # so we only make sure that the contents are copied correctly.
-path="$(nix flake prefetch --json "tarball+file://$(pwd)/tree.tar.gz" | jq -r .storePath)"
-[[ $(cat "$path/a/b/foo") = bar ]]
-[[ $(cat "$path/a/b/xyzzy") = bar ]]
-[[ $(cat "$path/a/yyy") = bar ]]
-[[ $(cat "$path/a/zzz") = bar ]]
-[[ $(cat "$path/c/aap") = bar ]]
-[[ $(cat "$path/fnord") = bar ]]
+json=$(nix flake prefetch --json "tarball+file://$(pwd)/tree.tar.gz" --out-link "$TEST_ROOT/result")
+[[ $json =~ ^'{"hash":"sha256-'.*'","locked":{"lastModified":'.*',"narHash":"sha256-'.*'","type":"tarball","url":"file:///'.*'/tree.tar.gz"},"original":{"type":"tarball","url":"file:///'.*'/tree.tar.gz"},"storePath":"'.*'/store/'.*'-source"}'$ ]]
+[[ $(cat "$TEST_ROOT/result/a/b/foo") = bar ]]
+[[ $(cat "$TEST_ROOT/result/a/b/xyzzy") = bar ]]
+[[ $(cat "$TEST_ROOT/result/a/yyy") = bar ]]
+[[ $(cat "$TEST_ROOT/result/a/zzz") = bar ]]
+[[ $(cat "$TEST_ROOT/result/c/aap") = bar ]]
+[[ $(cat "$TEST_ROOT/result/fnord") = bar ]]
 
 # Test a tarball that has multiple top-level directories.
 rm -rf "$TEST_ROOT/tar_root"
@@ -97,3 +98,17 @@ chmod +x "$TEST_ROOT/tar_root/foo"
 tar cvf "$TEST_ROOT/tar.tar" -C "$TEST_ROOT/tar_root" .
 path="$(nix flake prefetch --refresh --json "tarball+file://$TEST_ROOT/tar.tar" | jq -r .storePath)"
 [[ $(cat "$path/foo") = bar ]]
+
+# Test a tarball with non-contiguous directory entries.
+rm -rf "$TEST_ROOT/tar_root"
+mkdir -p "$TEST_ROOT/tar_root/a/b"
+echo foo > "$TEST_ROOT/tar_root/a/b/foo"
+echo bla > "$TEST_ROOT/tar_root/bla"
+tar cvf "$TEST_ROOT/tar.tar" -C "$TEST_ROOT/tar_root" .
+echo abc > "$TEST_ROOT/tar_root/bla"
+echo xyzzy > "$TEST_ROOT/tar_root/a/b/xyzzy"
+tar rvf "$TEST_ROOT/tar.tar" -C "$TEST_ROOT/tar_root" ./a/b/xyzzy ./bla
+path="$(nix flake prefetch --refresh --json "tarball+file://$TEST_ROOT/tar.tar" | jq -r .storePath)"
+[[ $(cat "$path/a/b/xyzzy") = xyzzy ]]
+[[ $(cat "$path/a/b/foo") = foo ]]
+[[ $(cat "$path/bla") = abc ]]

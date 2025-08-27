@@ -8,25 +8,27 @@ let
 
   boolPyLiteral = b: if b then "True" else "False";
 
-  testCaseExtension = { config, ... }: {
-    options = {
-      repo.enable = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Whether to provide a repo variable - automatic repo creation.";
+  testCaseExtension =
+    { config, ... }:
+    {
+      options = {
+        repo.enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Whether to provide a repo variable - automatic repo creation.";
+        };
+        repo.private = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Whether the repo should be private.";
+        };
       };
-      repo.private = mkOption {
-        type = types.bool;
-        default = false;
-        description = "Whether the repo should be private.";
+      config = mkIf config.repo.enable {
+        setupScript = ''
+          repo = Repo("${config.name}", private=${boolPyLiteral config.repo.private})
+        '';
       };
     };
-    config = mkIf config.repo.enable {
-      setupScript = ''
-        repo = Repo("${config.name}", private=${boolPyLiteral config.repo.private})
-      '';
-    };
-  };
 in
 {
   options = {
@@ -47,19 +49,15 @@ in
           self.name = name
           self.path = "/tmp/repos/" + name
           self.remote = "http://gitea:3000/test/" + name
-          self.remote_ssh = "ssh://gitea/root/" + name
+          self.remote_ssh = "ssh://gitea:3001/test/" + name
           self.git = f"git -C {self.path}"
           self.private = private
           self.create()
 
         def create(self):
-          # create ssh remote repo
+          # create remote repo
           gitea.succeed(f"""
-            git init --bare -b main /root/{self.name}
-          """)
-          # create http remote repo
-          gitea.succeed(f"""
-            curl --fail -X POST http://{gitea_admin}:{gitea_admin_password}@gitea:3000/api/v1/user/repos \
+            curl --fail -X POST http://{gitea_user}:{gitea_password}@gitea:3000/api/v1/user/repos \
               -H 'Accept: application/json' -H 'Content-Type: application/json' \
               -d {shlex.quote( f'{{"name":"{self.name}", "default_branch": "main", "private": {boolToJSON(self.private)}}}' )}
           """)
@@ -68,7 +66,7 @@ in
             mkdir -p {self.path} \
             && git init -b main {self.path} \
             && {self.git} remote add origin {self.remote} \
-            && {self.git} remote add origin-ssh root@gitea:{self.name}
+            && {self.git} remote add origin-ssh {self.remote_ssh}
           """)
     '';
   };

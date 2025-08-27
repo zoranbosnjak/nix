@@ -1,7 +1,7 @@
 suites += {
-  'name': 'flakes',
-  'deps': [],
-  'tests': [
+  'name' : 'flakes',
+  'deps' : [],
+  'tests' : [
     'flakes.sh',
     'develop.sh',
     'edit.sh',
@@ -24,6 +24,16 @@ suites += {
     'config.sh',
     'show.sh',
     'dubious-query.sh',
+    'shebang.sh',
+    'commit-lock-file-summary.sh',
+    'non-flake-inputs.sh',
+    'relative-paths.sh',
+    'relative-paths-lockfile.sh',
+    'symlink-paths.sh',
+    'debugger.sh',
+    'source-paths.sh',
+    'old-lockfiles.sh',
+    'trace-ifd.sh',
   ],
-  'workdir': meson.current_build_dir(),
+  'workdir' : meson.current_source_dir(),
 }

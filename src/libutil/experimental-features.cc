@@ -1,8 +1,8 @@
-#include "experimental-features.hh"
-#include "fmt.hh"
-#include "util.hh"
+#include "nix/util/experimental-features.hh"
+#include "nix/util/fmt.hh"
+#include "nix/util/util.hh"
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 namespace nix {
 
@@ -24,7 +24,7 @@ struct ExperimentalFeatureDetails
  * feature, we either have no issue at all if few features are not added
  * at the end of the list, or a proper merge conflict if they are.
  */
-constexpr size_t numXpFeatures = 1 + static_cast<size_t>(Xp::PipeOperators);
+constexpr size_t numXpFeatures = 1 + static_cast<size_t>(Xp::BLAKE3Hashes);
 
 constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails = {{
     {
@@ -107,7 +107,7 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
         .name = "git-hashing",
         .description = R"(
             Allow creating (content-addressed) store objects which are hashed via Git's hashing algorithm.
-            These store objects will not be understandable by older versions of Nix.
+            These store objects aren't understandable by older versions of Nix.
         )",
         .trackingUrl = "https://github.com/NixOS/nix/milestone/41",
     },
@@ -125,6 +125,8 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
 
             runCommand "foo"
               {
+                 # Optional: let Nix know "foo" requires the experimental feature
+                 requiredSystemFeatures = [ "recursive-nix" ];
                  buildInputs = [ nix jq ];
                  NIX_PATH = "nixpkgs=${<nixpkgs>}";
               }
@@ -302,12 +304,20 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
         )",
         .trackingUrl = "https://github.com/NixOS/nix/milestone/55",
     },
+    {
+        .tag = Xp::BLAKE3Hashes,
+        .name = "blake3-hashes",
+        .description = R"(
+            Enables support for BLAKE3 hashes.
+        )",
+        .trackingUrl = "",
+    },
 }};
 
 static_assert(
     []() constexpr {
         for (auto [index, feature] : enumerate(xpFeatureDetails))
-            if (index != (size_t)feature.tag)
+            if (index != (size_t) feature.tag)
                 return false;
         return true;
     }(),
@@ -332,8 +342,8 @@ const std::optional<ExperimentalFeature> parseExperimentalFeature(const std::str
 
 std::string_view showExperimentalFeature(const ExperimentalFeature tag)
 {
-    assert((size_t)tag < xpFeatureDetails.size());
-    return xpFeatureDetails[(size_t)tag].name;
+    assert((size_t) tag < xpFeatureDetails.size());
+    return xpFeatureDetails[(size_t) tag].name;
 }
 
 nlohmann::json documentExperimentalFeatures()
@@ -342,13 +352,14 @@ nlohmann::json documentExperimentalFeatures()
     for (auto & xpFeature : xpFeatureDetails) {
         std::stringstream docOss;
         docOss << stripIndentation(xpFeature.description);
-        docOss << fmt("\nRefer to [%1% tracking issue](%2%) for feature tracking.", xpFeature.name, xpFeature.trackingUrl);
+        docOss << fmt(
+            "\nRefer to [%1% tracking issue](%2%) for feature tracking.", xpFeature.name, xpFeature.trackingUrl);
         res[std::string{xpFeature.name}] = trim(docOss.str());
     }
     return (nlohmann::json) res;
 }
 
-std::set<ExperimentalFeature> parseFeatures(const std::set<std::string> & rawFeatures)
+std::set<ExperimentalFeature> parseFeatures(const StringSet & rawFeatures)
 {
     std::set<ExperimentalFeature> res;
     for (auto & rawFeature : rawFeatures)
@@ -358,11 +369,14 @@ std::set<ExperimentalFeature> parseFeatures(const std::set<std::string> & rawFea
 }
 
 MissingExperimentalFeature::MissingExperimentalFeature(ExperimentalFeature feature)
-    : Error("experimental Nix feature '%1%' is disabled; add '--extra-experimental-features %1%' to enable it", showExperimentalFeature(feature))
+    : Error(
+          "experimental Nix feature '%1%' is disabled; add '--extra-experimental-features %1%' to enable it",
+          showExperimentalFeature(feature))
     , missingFeature(feature)
-{}
+{
+}
 
-std::ostream & operator <<(std::ostream & str, const ExperimentalFeature & feature)
+std::ostream & operator<<(std::ostream & str, const ExperimentalFeature & feature)
 {
     return str << showExperimentalFeature(feature);
 }
@@ -383,4 +397,4 @@ void from_json(const nlohmann::json & j, ExperimentalFeature & feature)
         throw Error("Unknown experimental feature '%s' in JSON input", input);
 }
 
-}
+} // namespace nix

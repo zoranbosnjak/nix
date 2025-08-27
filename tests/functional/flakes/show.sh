@@ -6,7 +6,7 @@ flakeDir=$TEST_ROOT/flake
 mkdir -p "$flakeDir"
 
 writeSimpleFlake "$flakeDir"
-cd "$flakeDir"
+pushd "$flakeDir"
 
 
 # By default: Only show the packages content for the current system and no
@@ -88,27 +88,17 @@ assert show_output.legacyPackages.${builtins.currentSystem}.simple.name == "simp
 true
 '
 
-cat >flake.nix<<EOF
-{
-  outputs = inputs: {
-    packages.$system = {
-      aNoDescription = import ./simple.nix;
-      bOneLineDescription = import ./simple.nix // { meta.description = "one line"; };
-      cMultiLineDescription = import ./simple.nix // { meta.description = ''
-         line one
-        line two
-      ''; };
-      dLongDescription = import ./simple.nix // { meta.description = ''
-        01234567890123456789012345678901234567890123456789012345678901234567890123456789abcdefg
-      ''; };
-      eEmptyDescription = import ./simple.nix // { meta.description = ""; };
-    };
-  };
-}
-EOF
-nix flake show > ./show-output.txt
-test "$(awk -F '[:] ' '/aNoDescription/{print $NF}' ./show-output.txt)" = "package 'simple'"
-test "$(awk -F '[:] ' '/bOneLineDescription/{print $NF}' ./show-output.txt)" = "package 'simple' - 'one line'"
-test "$(awk -F '[:] ' '/cMultiLineDescription/{print $NF}' ./show-output.txt)" = "package 'simple' - 'line one'"
-test "$(awk -F '[:] ' '/dLongDescription/{print $NF}' ./show-output.txt)" = "package 'simple' - '012345678901234567890123456..."
-test "$(awk -F '[:] ' '/eEmptyDescription/{print $NF}' ./show-output.txt)" = "package 'simple'"
+# Test that nix flake show doesn't fail if one of the outputs contains
+# an IFD
+popd
+writeIfdFlake $flakeDir
+pushd $flakeDir
+
+
+nix flake show --json > show-output.json
+nix eval --impure --expr '
+let show_output = builtins.fromJSON (builtins.readFile ./show-output.json);
+in
+assert show_output.packages.${builtins.currentSystem}.default == { };
+true
+'

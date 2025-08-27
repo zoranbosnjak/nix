@@ -1,4 +1,11 @@
-{ lib, nixpkgs, system, pkgs, ... }: let
+{
+  lib,
+  nixpkgs,
+  system,
+  pkgs,
+  ...
+}:
+let
   clientPrivateKey = pkgs.writeText "id_ed25519" ''
     -----BEGIN OPENSSH PRIVATE KEY-----
     b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
@@ -9,40 +16,48 @@
     -----END OPENSSH PRIVATE KEY-----
   '';
 
-  clientPublicKey =
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFt5a8eH8BYZYjoQhzXGVKKHJe1pw1D0p7O2Vb9VTLzB";
+  clientPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFt5a8eH8BYZYjoQhzXGVKKHJe1pw1D0p7O2Vb9VTLzB";
 
-in {
+in
+{
   imports = [
     ../testsupport/setup.nix
     ../testsupport/gitea-repo.nix
   ];
   nodes = {
-    gitea = { pkgs, ... }: {
-      services.gitea.enable = true;
-      services.gitea.settings.service.DISABLE_REGISTRATION = true;
-      services.gitea.settings.log.LEVEL = "Info";
-      services.gitea.settings.database.LOG_SQL = false;
-      services.openssh.enable = true;
-      networking.firewall.allowedTCPPorts = [ 3000 ];
-      environment.systemPackages = [ pkgs.git pkgs.gitea ];
-
-      users.users.root.openssh.authorizedKeys.keys = [clientPublicKey];
-
-      # TODO: remove this after updating to nixos-23.11
-      nixpkgs.pkgs = lib.mkForce (import nixpkgs {
-        inherit system;
-        config.permittedInsecurePackages = [
-          "gitea-1.19.4"
+    gitea =
+      { pkgs, ... }:
+      {
+        services.gitea.enable = true;
+        services.gitea.lfs.enable = true;
+        services.gitea.settings = {
+          service.DISABLE_REGISTRATION = true;
+          server = {
+            DOMAIN = "gitea";
+            HTTP_PORT = 3000;
+            SSH_PORT = 3001;
+            START_SSH_SERVER = true;
+          };
+          log.LEVEL = "Info";
+          database.LOG_SQL = false;
+        };
+        networking.firewall.allowedTCPPorts = [
+          3000
+          3001
         ];
-      });
-    };
-    client = { pkgs, ... }: {
-      environment.systemPackages = [ pkgs.git ];
-    };
-  };
-  defaults = { pkgs, ... }: {
-    environment.systemPackages = [ pkgs.jq ];
+        environment.systemPackages = [
+          pkgs.git
+          pkgs.gitea
+        ];
+      };
+    client =
+      { pkgs, ... }:
+      {
+        environment.systemPackages = [
+          pkgs.git
+          pkgs.git-lfs
+        ];
+      };
   };
 
   setupScript = ''
@@ -50,27 +65,27 @@ in {
 
     gitea.wait_for_unit("gitea.service")
 
-    gitea_admin = "test"
-    gitea_admin_password = "test123test"
+    gitea_user = "test"
+    gitea_password = "test123test"
 
     gitea.succeed(f"""
       gitea --version >&2
       su -l gitea -c 'GITEA_WORK_DIR=/var/lib/gitea gitea admin user create \
-        --username {gitea_admin} --password {gitea_admin_password} --email test@client'
+        --username {gitea_user} --password {gitea_password} --email test@client'
     """)
 
     client.wait_for_unit("multi-user.target")
     gitea.wait_for_open_port(3000)
+    gitea.wait_for_open_port(3001)
 
-    gitea_admin_token = gitea.succeed(f"""
-      curl --fail -X POST http://{gitea_admin}:{gitea_admin_password}@gitea:3000/api/v1/users/test/tokens \
+    gitea.succeed(f"""
+      curl --fail -X POST http://{gitea_user}:{gitea_password}@gitea:3000/api/v1/user/keys \
         -H 'Accept: application/json' -H 'Content-Type: application/json' \
-        -d {shlex.quote( '{"name":"token", "scopes":["all"]}' )} \
-        | jq -r '.sha1'
-    """).strip()
+        -d {shlex.quote( '{"title":"key", "key":"${clientPublicKey}", "read_only": false}' )} >&2
+    """)
 
     client.succeed(f"""
-      echo "http://{gitea_admin}:{gitea_admin_password}@gitea:3000" >~/.git-credentials-admin
+      echo "http://{gitea_user}:{gitea_password}@gitea:3000" >~/.git-credentials-admin
       git config --global credential.helper 'store --file ~/.git-credentials-admin'
       git config --global user.email "test@client"
       git config --global user.name "Test User"
@@ -90,13 +105,7 @@ in {
       echo "Host gitea" >>~/.ssh/config
       echo "  StrictHostKeyChecking no" >>~/.ssh/config
       echo "  UserKnownHostsFile /dev/null" >>~/.ssh/config
-      echo "  User root" >>~/.ssh/config
+      echo "  User gitea" >>~/.ssh/config
     """)
-
-    # ensure ssh from client to gitea works
-    client.succeed("""
-      ssh root@gitea true
-    """)
-
   '';
 }

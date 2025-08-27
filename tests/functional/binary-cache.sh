@@ -151,8 +151,11 @@ nix-build --substituters "file://$cacheDir" --no-require-sigs dependencies.nix -
 grepQuiet "don't know how to build" "$TEST_ROOT/log"
 grepQuiet "building.*input-1" "$TEST_ROOT/log"
 grepQuiet "building.*input-2" "$TEST_ROOT/log"
-grepQuiet "copying path.*input-0" "$TEST_ROOT/log"
-grepQuiet "copying path.*top" "$TEST_ROOT/log"
+
+# Removed for now since 299141ecbd08bae17013226dbeae71e842b4fdd7 / issue #77 is reverted
+
+#grepQuiet "copying path.*input-0" "$TEST_ROOT/log"
+#grepQuiet "copying path.*top" "$TEST_ROOT/log"
 
 
 # Create a signed binary cache.
@@ -238,7 +241,7 @@ clearCache
 # preserve quotes variables in the single-quoted string
 # shellcheck disable=SC2016
 outPath=$(nix-build --no-out-link -E '
-  with import ./config.nix;
+  with import '"${config_nix}"';
   mkDerivation {
     name = "nar-listing";
     buildCommand = "mkdir $out; echo foo > $out/bar; ln -s xyzzy $out/link";
@@ -258,7 +261,7 @@ clearCache
 # preserve quotes variables in the single-quoted string
 # shellcheck disable=SC2016
 outPath=$(nix-build --no-out-link -E '
-  with import ./config.nix;
+  with import '"${config_nix}"';
   mkDerivation {
     name = "debug-info";
     buildCommand = "mkdir -p $out/lib/debug/.build-id/02; echo foo > $out/lib/debug/.build-id/02/623eda209c26a59b1a8638ff7752f6b945c26b.debug";
@@ -276,7 +279,7 @@ diff -u \
 # preserve quotes variables in the single-quoted string
 # shellcheck disable=SC2016
 expr='
-  with import ./config.nix;
+  with import '"${config_nix}"';
   mkDerivation {
     name = "multi-output";
     buildCommand = "mkdir -p $out; echo foo > $doc; echo $doc > $out/docref";

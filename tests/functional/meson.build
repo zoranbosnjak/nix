@@ -1,11 +1,10 @@
-project('nix-functional-tests', 'cpp',
+project(
+  'nix-functional-tests',
   version : files('.version'),
   default_options : [
-    'cpp_std=c++2a',
+    'cpp_std=c++23',
     # TODO(Qyriad): increase the warning level
     'warning_level=1',
-    'debug=true',
-    'optimization=2',
     'errorlogs=true', # Please print logs for tests that fail
   ],
   meson_version : '>= 1.3',
@@ -14,50 +13,34 @@ project('nix-functional-tests', 'cpp',
 
 fs = import('fs')
 
-# Need to combine source and build trees
-run_command(
-  'rsync',
-  '-a',
-  '--copy-unsafe-links',
-  meson.current_source_dir() / '',
-  meson.current_build_dir() / '',
-)
-# This current-source-escaping relative is no good because we don't know
-# where the build directory will be, therefore we fix it up. Once the
-# Make build system is gone, we should think about doing this better.
-scripts_dir = fs.relative_to(
-  meson.current_source_dir() / '..' / '..' / 'scripts',
-  meson.current_build_dir(),
-)
-run_command(
-  'sed',
-  '-i', meson.current_build_dir() / 'bash-profile.sh',
-  '-e', 's^../../scripts^@0@^'.format(scripts_dir),
-)
-
 nix = find_program('nix')
 bash = find_program('bash', native : true)
 busybox = find_program('busybox', native : true, required : false)
-coreutils = find_program('coreutils', native : true)
+# Look up `coreutils` package by searching for `ls` binary.
+# Previously we looked up `coreutils` on `linux`, but that is not
+# guaranteed to exist either.
+coreutils = find_program('ls', native : true)
 dot = find_program('dot', native : true, required : false)
 
 nix_bin_dir = fs.parent(nix.full_path())
 
+subdir('nix-meson-build-support/default-system-cpu')
+
 test_confdata = {
-  'bindir': nix_bin_dir,
-  'coreutils': fs.parent(coreutils.full_path()),
-  'dot': dot.found() ? dot.full_path() : '',
-  'bash': bash.full_path(),
-  'sandbox_shell': busybox.found() ? busybox.full_path() : '',
-  'PACKAGE_VERSION': meson.project_version(),
-  'system': host_machine.cpu_family() + '-' + host_machine.system(),
+  'bindir' : nix_bin_dir,
+  'coreutils' : fs.parent(coreutils.full_path()),
+  'dot' : dot.found() ? dot.full_path() : '',
+  'bash' : bash.full_path(),
+  'sandbox_shell' : busybox.found() ? busybox.full_path() : '',
+  'PACKAGE_VERSION' : meson.project_version(),
+  'system' : nix_system_cpu + '-' + host_machine.system(),
 }
 
 # Just configures `common/vars-and-functions.sh.in`.
 # Done as a subdir() so Meson places it under `common` in the build directory as well.
 subdir('common')
 
-config_nix_in = configure_file(
+configure_file(
   input : 'config.nix.in',
   output : 'config.nix',
   configuration : test_confdata,
@@ -66,8 +49,8 @@ config_nix_in = configure_file(
 suites = [
   {
     'name' : 'main',
-    'deps': [],
-    'tests': [
+    'deps' : [],
+    'tests' : [
       'test-infra.sh',
       'gc.sh',
       'nix-collect-garbage-d.sh',
@@ -93,6 +76,7 @@ suites = [
       'gc-runtime.sh',
       'tarball.sh',
       'fetchGit.sh',
+      'fetchGitShallow.sh',
       'fetchurl.sh',
       'fetchPath.sh',
       'fetchTree-file.sh',
@@ -129,6 +113,8 @@ suites = [
       'impure-eval.sh',
       'pure-eval.sh',
       'eval.sh',
+      'short-path-literals.sh',
+      'no-url-literals.sh',
       'repl.sh',
       'binary-cache-build-remote.sh',
       'search.sh',
@@ -152,7 +138,8 @@ suites = [
       'nix-copy-ssh-ng.sh',
       'post-hook.sh',
       'function-trace.sh',
-      'fmt.sh',
+      'formatter.sh',
+      'flamegraph-profiler.sh',
       'eval-store.sh',
       'why-depends.sh',
       'derivation-json.sh',
@@ -163,6 +150,7 @@ suites = [
       'placeholders.sh',
       'ssh-relay.sh',
       'build.sh',
+      'build-cores.sh',
       'build-delete.sh',
       'output-normalization.sh',
       'selfref-gc.sh',
@@ -177,6 +165,7 @@ suites = [
       'impure-derivations.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
+      'json.sh',
       'toString-path.sh',
       'read-only-store.sh',
       'nested-sandboxing.sh',
@@ -184,23 +173,25 @@ suites = [
       'debugger.sh',
       'extra-sandbox-profile.sh',
       'help.sh',
+      'symlinks.sh',
     ],
-    'workdir': meson.current_build_dir(),
+    'workdir' : meson.current_source_dir(),
   },
 ]
 
 nix_store = dependency('nix-store', required : false)
 if nix_store.found()
+  add_languages('cpp')
   subdir('test-libstoreconsumer')
   suites += {
-    'name': 'libstoreconsumer',
-    'deps': [
+    'name' : 'libstoreconsumer',
+    'deps' : [
       libstoreconsumer_tester,
     ],
-    'tests': [
+    'tests' : [
       'test-libstoreconsumer.sh',
     ],
-    'workdir': meson.current_build_dir(),
+    'workdir' : meson.current_source_dir(),
   }
 
 endif
@@ -208,59 +199,73 @@ endif
 # Plugin tests require shared libraries support.
 nix_expr = dependency('nix-expr', required : false)
 if nix_expr.found() and get_option('default_library') != 'static'
+  add_languages('cpp')
   subdir('plugins')
   suites += {
-    'name': 'plugins',
-    'deps': [
+    'name' : 'plugins',
+    'deps' : [
       libplugintest,
     ],
-    'tests': [
+    'tests' : [
       'plugins.sh',
     ],
-    'workdir': meson.current_build_dir(),
+    'workdir' : meson.current_source_dir(),
   }
 endif
 
 subdir('ca')
 subdir('dyn-drv')
 subdir('flakes')
+subdir('git')
 subdir('git-hashing')
 subdir('local-overlay-store')
 
 foreach suite : suites
+  workdir = suite['workdir']
+  suite_name = suite['name']
+  # This is workaround until [1] is resolved. When building in a devshell
+  # as a subproject we want the tests to depend on the nix build target, so
+  # that it gets automatically rebuilt.
+  # However, when the functional test suite is built separately (via componentized
+  # builds or in NixOS tests) we can't depend on the nix executable, since it's
+  # an external program. The following is a simple heuristic that suffices for now.
+  # [1]: https://github.com/mesonbuild/meson/issues/13877
+  deps = suite['deps']
+  if meson.is_subproject()
+    nix_subproject = subproject('nix')
+    deps += [ nix ] + nix_subproject.get_variable('nix_symlinks_targets')
+  endif
   foreach script : suite['tests']
-    workdir = suite['workdir']
-    prefix = fs.relative_to(workdir, meson.project_build_root())
-
-    script = script
     # Turns, e.g., `tests/functional/flakes/show.sh` into a Meson test target called
     # `functional-flakes-show`.
-    name = fs.replace_suffix(prefix / script, '')
+    name = fs.replace_suffix(script, '')
 
     test(
       name,
       bash,
-      args: [
+      args : [
         '-x',
         '-e',
         '-u',
-        '-o', 'pipefail',
+        '-o',
+        'pipefail',
         script,
       ],
-      suite : suite['name'],
+      suite : suite_name,
       env : {
-        'TEST_NAME': name,
-        'NIX_REMOTE': '',
-        'PS4': '+(${BASH_SOURCE[0]-$0}:$LINENO) ',
+        '_NIX_TEST_SOURCE_DIR' : meson.current_source_dir(),
+        '_NIX_TEST_BUILD_DIR' : meson.current_build_dir(),
+        'TEST_NAME' : suite_name / name,
+        'NIX_REMOTE' : '',
+        'PS4' : '+(${BASH_SOURCE[0]-$0}:$LINENO) ',
       },
-      # some tests take 15+ seconds even on an otherwise idle machine, on a loaded machine
-      # this can easily drive them to failure. give them more time than default of 30sec
+      # Some tests take 15+ seconds even on an otherwise idle machine;
+      # on a loaded machine this can easily drive them to failure. Give
+      # them more time than the default of 30 seconds.
       timeout : 300,
       # Used for target dependency/ordering tracking, not adding compiler flags or anything.
-      depends : suite['deps'],
+      depends : deps,
       workdir : workdir,
-      # Won't pass until man pages are generated
-      should_fail : suite['name'] == 'main' and script == 'help.sh'
     )
   endforeach
 endforeach

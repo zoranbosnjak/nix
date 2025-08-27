@@ -1,10 +1,9 @@
-#include "current-process.hh"
-#include "command-installable-value.hh"
-#include "shared.hh"
-#include "eval.hh"
-#include "attr-path.hh"
-#include "progress-bar.hh"
-#include "editor-for.hh"
+#include "nix/util/current-process.hh"
+#include "nix/cmd/command-installable-value.hh"
+#include "nix/main/shared.hh"
+#include "nix/expr/eval.hh"
+#include "nix/expr/attr-path.hh"
+#include "nix/cmd/editor-for.hh"
 
 #include <unistd.h>
 
@@ -20,11 +19,14 @@ struct CmdEdit : InstallableValueCommand
     std::string doc() override
     {
         return
-          #include "edit.md"
-          ;
+#include "edit.md"
+            ;
     }
 
-    Category category() override { return catSecondary; }
+    Category category() override
+    {
+        return catSecondary;
+    }
 
     void run(ref<Store> store, ref<InstallableValue> installable) override
     {
@@ -40,7 +42,7 @@ struct CmdEdit : InstallableValueCommand
             }
         }();
 
-        stopProgressBar();
+        logger->stop();
 
         auto args = editorFor(file, line);
 
@@ -49,7 +51,8 @@ struct CmdEdit : InstallableValueCommand
         execvp(args.front().c_str(), stringsToCharPtrs(args).data());
 
         std::string command;
-        for (const auto &arg : args) command += " '" + arg + "'";
+        for (const auto & arg : args)
+            command += " '" + arg + "'";
         throw SysError("cannot run command%s", command);
     }
 };

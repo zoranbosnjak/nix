@@ -1,6 +1,6 @@
-#include "command.hh"
-#include "store-api.hh"
-#include "archive.hh"
+#include "nix/cmd/command.hh"
+#include "nix/store/store-api.hh"
+#include "nix/util/archive.hh"
 
 using namespace nix;
 
@@ -14,13 +14,13 @@ struct CmdDumpPath : StorePathCommand
     std::string doc() override
     {
         return
-          #include "store-dump-path.md"
-          ;
+#include "store-dump-path.md"
+            ;
     }
 
     void run(ref<Store> store, const StorePath & storePath) override
     {
-        FdSink sink(getStandardOut());
+        FdSink sink(getStandardOutput());
         store->narFromPath(storePath, sink);
         sink.flush();
     }
@@ -34,11 +34,7 @@ struct CmdDumpPath2 : Command
 
     CmdDumpPath2()
     {
-        expectArgs({
-            .label = "path",
-            .handler = {&path},
-            .completer = completePath
-        });
+        expectArgs({.label = "path", .handler = {&path}, .completer = completePath});
     }
 
     std::string description() override
@@ -49,20 +45,22 @@ struct CmdDumpPath2 : Command
     std::string doc() override
     {
         return
-          #include "nar-dump-path.md"
-          ;
+#include "nar-dump-path.md"
+            ;
     }
 
     void run() override
     {
-        FdSink sink(getStandardOut());
+        FdSink sink(getStandardOutput());
         dumpPath(path, sink);
         sink.flush();
     }
 };
 
-struct CmdNarDumpPath : CmdDumpPath2 {
-    void run() override {
+struct CmdNarDumpPath : CmdDumpPath2
+{
+    void run() override
+    {
         warn("'nix nar dump-path' is a deprecated alias for 'nix nar pack'");
         CmdDumpPath2::run();
     }

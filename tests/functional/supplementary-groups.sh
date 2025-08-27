@@ -9,12 +9,11 @@ needLocalStore "The test uses --store always so we would just be bypassing the d
 
 TODO_NixOS
 
-unshare --mount --map-root-user bash <<EOF
+execUnshare <<EOF
   source common.sh
 
   # Avoid store dir being inside sandbox build-dir
   unset NIX_STORE_DIR
-  unset NIX_STATE_DIR
 
   setLocalStore () {
     export NIX_REMOTE=\$TEST_ROOT/\$1
@@ -24,15 +23,13 @@ unshare --mount --map-root-user bash <<EOF
   cmd=(nix-build ./hermetic.nix --arg busybox "$busybox" --arg seed 1 --no-out-link)
 
   # Fails with default setting
-  # TODO better error
   setLocalStore store1
-  expectStderr 1 "\${cmd[@]}" | grepQuiet "unable to start build process"
+  expectStderr 1 "\${cmd[@]}" | grepQuiet "setgroups failed"
 
   # Fails with `require-drop-supplementary-groups`
-  # TODO better error
   setLocalStore store2
   NIX_CONFIG='require-drop-supplementary-groups = true' \
-    expectStderr 1 "\${cmd[@]}" | grepQuiet "unable to start build process"
+    expectStderr 1 "\${cmd[@]}" | grepQuiet "setgroups failed"
 
   # Works without `require-drop-supplementary-groups`
   setLocalStore store3

@@ -2,9 +2,6 @@
 
 source ./common.sh
 
-# FIXME: this test is disabled because relative path flakes are broken. Re-enable this in #10089.
-exit 0
-
 requireGit
 
 flakeFollowsA=$TEST_ROOT/follows/flakeA
@@ -120,7 +117,7 @@ nix flake lock $flakeFollowsA
 [[ $(jq -c .nodes.B.inputs.foobar $flakeFollowsA/flake.lock) = '"foobar"' ]]
 jq -r -c '.nodes | keys | .[]' $flakeFollowsA/flake.lock | grep "^foobar$"
 
-# Ensure a relative path is not allowed to go outside the store path
+# Check that path: inputs cannot escape from their root.
 cat > $flakeFollowsA/flake.nix <<EOF
 {
     description = "Flake A";
@@ -133,7 +130,28 @@ EOF
 
 git -C $flakeFollowsA add flake.nix
 
-expect 1 nix flake lock $flakeFollowsA 2>&1 | grep 'points outside'
+expect 1 nix flake lock $flakeFollowsA 2>&1 | grep '/flakeB.*is forbidden in pure evaluation mode'
+expect 1 nix flake lock --impure $flakeFollowsA 2>&1 | grep '/flakeB.*does not exist'
+
+# Test relative non-flake inputs.
+cat > $flakeFollowsA/flake.nix <<EOF
+{
+    description = "Flake A";
+    inputs = {
+        E.flake = false;
+        E.url = "./foo.nix"; # test relative paths without 'path:'
+    };
+    outputs = { E, ... }: { e = import E; };
+}
+EOF
+
+echo 123 > $flakeFollowsA/foo.nix
+
+git -C $flakeFollowsA add flake.nix foo.nix
+
+nix flake lock $flakeFollowsA
+
+[[ $(nix eval --json $flakeFollowsA#e) = 123 ]]
 
 # Non-existant follows should print a warning.
 cat >$flakeFollowsA/flake.nix <<EOF
@@ -338,6 +356,77 @@ json=$(nix flake metadata "$flakeFollowsCustomUrlA" --json)
 rm "$flakeFollowsCustomUrlA"/flake.lock
 
 # if override-input is specified, lock "original" entry should contain original url
-json=$(nix flake metadata "$flakeFollowsCustomUrlA" --override-input B/C "path:./flakeB/flakeD" --json)
+json=$(nix flake metadata "$flakeFollowsCustomUrlA" --override-input B/C "$flakeFollowsCustomUrlD" --json)
 echo "$json" | jq .locks.nodes.C.original
 [[ $(echo "$json" | jq -r .locks.nodes.C.original.path) = './flakeC' ]]
+
+# Test deep overrides, e.g. `inputs.B.inputs.C.inputs.D.follows = ...`.
+
+cat <<EOF > $flakeFollowsD/flake.nix
+{ outputs = _: {}; }
+EOF
+cat <<EOF > $flakeFollowsC/flake.nix
+{
+  inputs.D.url = "path:nosuchflake";
+  outputs = _: {};
+}
+EOF
+cat <<EOF > $flakeFollowsB/flake.nix
+{
+  inputs.C.url = "path:$flakeFollowsC";
+  outputs = _: {};
+}
+EOF
+cat <<EOF > $flakeFollowsA/flake.nix
+{
+  inputs.B.url = "path:$flakeFollowsB";
+  inputs.D.url = "path:$flakeFollowsD";
+  inputs.B.inputs.C.inputs.D.follows = "D";
+  outputs = _: {};
+}
+EOF
+
+nix flake lock $flakeFollowsA
+
+[[ $(jq -c .nodes.C.inputs.D $flakeFollowsA/flake.lock) = '["D"]' ]]
+
+# Test overlapping flake follows: B has D follow C/D, while A has B/C follow C
+
+cat <<EOF > $flakeFollowsC/flake.nix
+{
+  inputs.D.url = "path:$flakeFollowsD";
+  outputs = _: {};
+}
+EOF
+cat <<EOF > $flakeFollowsB/flake.nix
+{
+  inputs.C.url = "path:nosuchflake";
+  inputs.D.follows = "C/D";
+  outputs = _: {};
+}
+EOF
+cat <<EOF > $flakeFollowsA/flake.nix
+{
+  inputs.B.url = "path:$flakeFollowsB";
+  inputs.C.url = "path:$flakeFollowsC";
+  inputs.B.inputs.C.follows = "C";
+  outputs = _: {};
+}
+EOF
+
+# bug was not triggered without recreating the lockfile
+nix flake lock $flakeFollowsA --recreate-lock-file
+
+[[ $(jq -c .nodes.B.inputs.D $flakeFollowsA/flake.lock) = '["B","C","D"]' ]]
+
+# Check that you can't have both a flakeref and a follows attribute on an input.
+cat <<EOF > $flakeFollowsB/flake.nix
+{
+  inputs.C.url = "path:nosuchflake";
+  inputs.D.url = "path:nosuchflake";
+  inputs.D.follows = "C/D";
+  outputs = _: {};
+}
+EOF
+
+expectStderr 1 nix flake lock $flakeFollowsA --recreate-lock-file | grepQuiet "flake input has both a flake reference and a follows attribute"
